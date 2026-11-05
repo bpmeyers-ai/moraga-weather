@@ -138,6 +138,9 @@
             animation: subtle-pulse 3s infinite ease-in-out;
         }
 
+        #clock-time { font-size: 250px; font-size: min(27vw, 52vh, 250px); }
+        #daily-forecast { min-width: 92px; flex-shrink: 0; }
+
         /* Text shadow for legibility on bright backgrounds */
         .text-glow {
             text-shadow: 0 4px 20px rgba(0, 0, 0, 0.9), 0 2px 6px rgba(0, 0, 0, 0.95);
@@ -179,13 +182,9 @@
             
             <!-- Responsive Scaled Clock Display -->
             <div class="flex items-center justify-center tracking-tight text-white text-glow">
-                <span id="clock-time" class="text-[140px] sm:text-[185px] leading-none font-semibold tracking-tighter">12:00</span>
+                <span id="clock-time" class="leading-none font-semibold tracking-tighter">12:00</span>
                 
-                <!-- Stacked Seconds and AM/PM Column -->
-                <div class="flex flex-col justify-between h-[105px] sm:h-[140px] ml-2 sm:ml-3 text-left py-0.5">
-                    <span id="clock-seconds" class="text-xl sm:text-2xl font-mono text-slate-300 font-semibold tracking-wider">00</span>
-                    <span id="clock-ampm" class="text-3xl sm:text-4xl font-extrabold text-sky-300 tracking-wider">AM</span>
-                </div>
+                <span id="clock-ampm" class="text-3xl sm:text-4xl font-extrabold text-sky-300 tracking-wider ml-3 self-end mb-5">AM</span>
             </div>
 
             <!-- Date Display -->
@@ -234,18 +233,21 @@
 
                 </div>
 
-                <!-- Vertical Divider Left of Radar -->
+                <!-- Vertical Divider Left of Forecast -->
                 <div class="h-9 w-[1px] bg-white/20 hidden sm:block"></div>
 
-                <!-- Center Interactive Live Radar Button -->
-                <button onclick="openLiveRadar()" class="flex flex-col items-center justify-center px-2.5 py-1 rounded-lg hover:bg-white/10 active:scale-95 transition-all text-slate-200 hover:text-white cursor-pointer" title="Open Live Radar Map">
-                    <div class="text-xs sm:text-base uppercase tracking-wider font-bold text-slate-200 leading-tight">LIVE RADAR</div>
-                    <div class="text-lg sm:text-2xl mt-0.5">
-                        📡
+                <!-- Today's forecast uses the daily code, not current conditions. -->
+                <div id="daily-forecast" class="flex flex-col items-center justify-center px-1 gap-1">
+                    <div class="text-xs sm:text-sm uppercase tracking-wider font-bold text-slate-200">TODAY</div>
+                    <div id="daily-forecast-icon" role="img" aria-label="Today's forecast loading" class="text-2xl sm:text-3xl text-slate-300">
+                        <i class="fa-solid fa-question" aria-hidden="true"></i>
                     </div>
-                </button>
+                    <div class="text-xs sm:text-sm text-sky-300 whitespace-nowrap" title="Today's maximum precipitation probability, including rain or snow">
+                        <i class="fa-solid fa-droplet" aria-hidden="true"></i> <span id="daily-rain-chance">--%</span>
+                    </div>
+                </div>
 
-                <!-- Vertical Divider Right of Radar -->
+                <!-- Vertical Divider Right of Forecast -->
                 <div class="h-9 w-[1px] bg-white/20 hidden sm:block"></div>
 
                 <!-- Right Grouping: Detailed Metrics (High/Low, Humidity, Wind, Sun Event) -->
@@ -374,7 +376,6 @@
                 timeZone: resolvedTimeZone,
                 hour: 'numeric',
                 minute: '2-digit',
-                second: '2-digit',
                 hour12: (CONFIG_TIME_FORMAT === 12)
             };
 
@@ -383,18 +384,15 @@
 
             let hours = '';
             let minutes = '';
-            let seconds = '';
             let ampm = '';
 
             parts.forEach(part => {
                 if (part.type === 'hour') hours = part.value;
                 if (part.type === 'minute') minutes = part.value;
-                if (part.type === 'second') seconds = part.value;
                 if (part.type === 'dayPeriod') ampm = part.value.toUpperCase();
             });
 
             document.getElementById('clock-time').textContent = `${hours}:${minutes}`;
-            document.getElementById('clock-seconds').textContent = seconds;
 
             if (CONFIG_TIME_FORMAT === 12) {
                 document.getElementById('clock-ampm').textContent = ampm;
@@ -414,7 +412,7 @@
                 const windSpeedParam = isCelsius ? "kmh" : "mph";
 
                 const response = await fetch(
-                    `https://api.open-meteo.com/v1/forecast?latitude=${resolvedLatitude}&longitude=${resolvedLongitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day&hourly=precipitation_probability,rain,showers,snowfall&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&temperature_unit=${tempUnitParam}&wind_speed_unit=${windSpeedParam}&timezone=${encodeURIComponent(CONFIG_TIME_ZONE)}&timeformat=unixtime&_cb=${Date.now()}`
+                    `https://api.open-meteo.com/v1/forecast?latitude=${resolvedLatitude}&longitude=${resolvedLongitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day&hourly=precipitation_probability,rain,showers,snowfall&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code,precipitation_probability_max&temperature_unit=${tempUnitParam}&wind_speed_unit=${windSpeedParam}&timezone=${encodeURIComponent(CONFIG_TIME_ZONE)}&timeformat=unixtime&_cb=${Date.now()}`
                 );
                 
                 if (!response.ok) throw new Error("Weather network response error");
@@ -444,10 +442,12 @@
 
                 checkUpcomingPrecipitation(hourly, current.weather_code);
                 updateSolarEvent(daily);
+                updateDailyForecast(daily);
 
             } catch (error) {
                 console.warn('Weather fetch error:', error);
                 document.getElementById('weather-condition').textContent = 'Weather Unavailable';
+                updateDailyForecast(null);
                 document.getElementById('rain-alert-container').classList.add('hidden');
             }
         }
@@ -593,9 +593,18 @@
             }
         }
 
-        function openLiveRadar() {
-            const windyUrl = `https://www.windy.com/?radar,${resolvedLatitude},${resolvedLongitude},9`;
-            window.open(windyUrl, '_blank');
+        function updateDailyForecast(daily) {
+            const code = daily && daily.weather_code ? daily.weather_code[0] : null;
+            const info = code != null ? wmoCodeMap[code] : null;
+            const icon = document.getElementById('daily-forecast-icon');
+            const description = info ? info.desc : 'Forecast unavailable';
+            icon.className = `text-2xl sm:text-3xl ${info ? info.color : 'text-slate-300'}`;
+            icon.innerHTML = `<i class="fa-solid ${info ? info.icon : 'fa-question'}" aria-hidden="true"></i>`;
+            icon.setAttribute('aria-label', `Today: ${description}`);
+            icon.title = `Today: ${description}`;
+            const chance = daily && daily.precipitation_probability_max ? daily.precipitation_probability_max[0] : null;
+            const validChance = typeof chance === 'number' && Number.isFinite(chance) && chance >= 0 && chance <= 100;
+            document.getElementById('daily-rain-chance').textContent = validChance ? `${Math.round(chance)}%` : '--%';
         }
 
         function initSilentAudioKeepAlive() {
